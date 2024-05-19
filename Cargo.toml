@@ -1,0 +1,16 @@
+[package]
+name = "futility-rs"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+panic = 'abort'
+
+[dependencies]
+rustfmt = "0.10.0"
+thiserror = "1.0"
+bitflags= "2.5.0"
+clap = { version = "4.5.4", features = ["derive"] }
+camino = "1.1.7"
+clap_complete = "4.5.2"
+itertools = "0.13.0"
