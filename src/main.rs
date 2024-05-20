@@ -22,6 +22,9 @@ enum Commands {
     #[command(alias("dump_fmap"), disable_help_flag = true)]
     /// Dump FlashMap (FMAP) layout or sections.
     DumpFmap(cmd::dump_fmap::DumpFmapArgs),
+
+    #[command()]
+    ExtractFmap(cmd::extract_fmap::ExtractFmapArgs),
 }
 
 fn print_completions<G: Generator>(gen: G, cmd: &mut Command) {
@@ -43,6 +46,7 @@ fn main() {
         .expect("empty command should not be allowed by parser");
     let result = match command {
         Commands::DumpFmap(args) => cmd::dump_fmap::run_command(args),
+        Commands::ExtractFmap(args) => cmd::extract_fmap::run_command(args),
     };
 
     if let Err(e) = result {

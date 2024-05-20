@@ -5,12 +5,10 @@ use std::rc::Rc;
 
 use camino::Utf8PathBuf;
 use clap::builder::ArgPredicate;
-use clap::error::ErrorKind;
-use clap::{ArgAction, Args, CommandFactory, ValueHint};
+use clap::{ArgAction, Args, ValueHint};
 use itertools::Itertools;
 
-use crate::fmap;
-use crate::Cli;
+use crate::{cmd::extract_fmap, fmap};
 
 #[derive(Args)]
 pub struct DumpFmapArgs {
@@ -18,7 +16,7 @@ pub struct DumpFmapArgs {
     /// Firmware image path.
     image: Utf8PathBuf,
 
-    #[arg(long, short = 'x', action,
+    #[arg(long, short = 'x', action, hide = true,
           conflicts_with_all = ["human_readable", "parsable", "flashrom_parsable", "ec_parsable"])]
     /// Extract sections to the file.
     extract: bool,
@@ -57,6 +55,9 @@ pub struct DumpFmapArgs {
     #[arg(long, action = ArgAction::Help)]
     /// Print help.
     help: Option<bool>,
+
+    #[arg(index = 2, trailing_var_arg = true, value_parser = extract_fmap::extraction_param_valid, hide = true)]
+    params: Vec<(String, Utf8PathBuf)>,
 }
 
 #[derive(Debug)]
@@ -284,20 +285,18 @@ fn dump_ec_parsable(fmap: &fmap::FMap) {
 }
 
 pub fn run_command(args: &DumpFmapArgs) -> Result<(), Box<dyn Error>> {
-    if !args.image.exists() {
-        let mut cmd = Cli::command();
-        cmd.error(
-            ErrorKind::ValueValidation,
-            format!("Image file `{}` doesn't exist", args.image),
-        )
-        .exit();
+    if args.extract {
+        let extract_args = extract_fmap::ExtractFmapArgs {
+            image: args.image.clone(),
+            params: args.params.clone(),
+        };
+        return extract_fmap::run_command(&extract_args);
     }
+
     let input_file = File::open(&args.image)?;
     let (fmap, fmap_offset) = fmap::FMap::find_fmap(&input_file)?;
 
-    if args.extract {
-        unimplemented!();
-    } else if args.human_readable {
+    if args.human_readable {
         dump_human_readable(
             &fmap,
             args.human_readable_with_gaps,
