@@ -7,6 +7,7 @@ use camino::Utf8PathBuf;
 use clap::builder::ArgPredicate;
 use clap::{ArgAction, Args, ValueHint};
 use itertools::Itertools;
+use log::{error, warn};
 
 use crate::{cmd::extract_fmap, fmap};
 
@@ -123,7 +124,7 @@ fn dump_human_readable(fmap: &fmap::FMap, show_gaps: bool, ignore_overlap: bool)
             // Check for overlap
             if ara_offset < arb_offset && arb_offset < ara_end && ara_end < arb_end {
                 if ignore_overlap {
-                    eprintln!(
+                    error!(
                         r#"ERROR: Areas "{}" ({:#x} - {:#x}) and "{}" ({:#x} - {:#x}) overlap!"#,
                         ara_name, ara_offset, ara_end, arb_name, arb_offset, arb_end
                     );
@@ -166,7 +167,7 @@ fn dump_human_readable(fmap: &fmap::FMap, show_gaps: bool, ignore_overlap: bool)
     );
 
     if gap_count > 0 {
-        eprintln!("WARNING: Gaps in FlashMap found. Use -H to show them.");
+        warn!("WARNING: Gaps in FlashMap found. Use -H to show them.");
     }
 }
 

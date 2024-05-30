@@ -1,16 +1,22 @@
 [package]
 name = "futility-rs"
 version = "0.1.0"
-edition = "2021"
+edition = "2018"
 
 [profile.release]
 panic = 'abort'
 
 [dependencies]
-rustfmt = "0.10.0"
 thiserror = "1.0"
 bitflags= "2.5.0"
 clap = { version = "4.5.4", features = ["derive"] }
 camino = "1.1.7"
 clap_complete = "4.5.2"
 itertools = "0.13.0"
+log = "0.4.21"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.13"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+env_logger = "0.11.3"

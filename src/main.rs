@@ -1,5 +1,6 @@
 use clap::{Command, CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Generator, Shell};
+use log::error;
 use std::io;
 use std::process::exit;
 
@@ -31,7 +32,19 @@ fn print_completions<G: Generator>(gen: G, cmd: &mut Command) {
     generate(gen, cmd, cmd.get_name().to_string(), &mut io::stdout());
 }
 
+#[cfg(target_os = "android")]
+fn init_logger() {
+    use android_logger::Config;
+    android_logger::init_once(Config::default().with_max_level(LevelFilter::Trace));
+}
+
+#[cfg(not(target_od = "android"))]
+fn init_logger() {
+    env_logger::init();
+}
+
 fn main() {
+    init_logger();
     let cli = Cli::parse();
 
     if let Some(generator) = cli.generator {
@@ -50,7 +63,7 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("ERROR: {}", e);
+        error!("{}", e);
         exit(-1);
     }
 }
