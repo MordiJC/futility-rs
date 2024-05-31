@@ -32,19 +32,8 @@ fn print_completions<G: Generator>(gen: G, cmd: &mut Command) {
     generate(gen, cmd, cmd.get_name().to_string(), &mut io::stdout());
 }
 
-#[cfg(target_os = "android")]
-fn init_logger() {
-    use android_logger::Config;
-    android_logger::init_once(Config::default().with_max_level(LevelFilter::Trace));
-}
-
-#[cfg(not(target_od = "android"))]
-fn init_logger() {
-    env_logger::init();
-}
-
 fn main() {
-    init_logger();
+    env_logger::init();
     let cli = Cli::parse();
 
     if let Some(generator) = cli.generator {
