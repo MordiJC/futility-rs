@@ -14,20 +14,10 @@ pub struct ExtractFmapArgs {
     /// Firmware image path.
     pub(in crate::cmd) image: Utf8PathBuf,
 
-    #[arg(required = true, index = 2, trailing_var_arg = true, value_parser = extraction_param_valid)]
+    #[arg(required = true, index = 2, trailing_var_arg = true, value_parser = common::area_to_file_mapping_param_valid)]
     /// List of mappings from FlashMap section to file in format SECTION:FILE.
     /// Example: FW_MAIN_A:fw_main_a.bin
     pub(in crate::cmd) params: Vec<(String, Utf8PathBuf)>,
-}
-
-pub(in crate::cmd) fn extraction_param_valid(s: &str) -> Result<(String, Utf8PathBuf), String> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 2 {
-        return Err(String::from(
-            "The argument should be in the format 'SECTION:PATH'",
-        ));
-    }
-    Ok((String::from(parts[0]), Utf8PathBuf::from(parts[1])))
 }
 
 pub fn run_command(args: &ExtractFmapArgs) -> Result<(), Box<dyn Error>> {

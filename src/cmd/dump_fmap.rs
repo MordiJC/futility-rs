@@ -9,7 +9,10 @@ use clap::{ArgAction, Args, ValueHint};
 use itertools::Itertools;
 use log::{error, warn};
 
-use crate::{cmd::extract_fmap, fmap};
+use crate::{
+    cmd::{common, extract_fmap},
+    fmap,
+};
 
 #[derive(Args)]
 pub struct DumpFmapArgs {
@@ -57,7 +60,7 @@ pub struct DumpFmapArgs {
     /// Print help.
     help: Option<bool>,
 
-    #[arg(index = 2, trailing_var_arg = true, value_parser = extract_fmap::extraction_param_valid, hide = true)]
+    #[arg(index = 2, trailing_var_arg = true, value_parser = common::area_to_file_mapping_param_valid, hide = true)]
     params: Vec<(String, Utf8PathBuf)>,
 }
 
