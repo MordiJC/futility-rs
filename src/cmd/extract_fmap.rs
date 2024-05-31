@@ -35,7 +35,7 @@ pub fn run_command(args: &ExtractFmapArgs) -> Result<(), Box<dyn Error>> {
 
         // Verify area
         let ar = aro.unwrap();
-        if ar.offset == 0 {
+        if ar.size == 0 {
             error!("Area '{}' has zero size", area_name);
             continue;
         }
