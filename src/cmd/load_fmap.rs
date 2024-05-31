@@ -1,11 +1,12 @@
 use std::error::Error;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::{cmd::common, fmap};
 use camino::Utf8PathBuf;
 use clap::{arg, Args, ValueHint};
 use log::{error, info};
+use tempfile::tempfile;
 
 #[derive(Args)]
 pub struct LoadFmapArgs {
@@ -27,18 +28,15 @@ pub struct LoadFmapArgs {
 }
 
 pub fn run_command(args: &LoadFmapArgs) -> Result<(), Box<dyn Error>> {
-    let input_file = File::open(&args.image)?;
+    let mut input_file = File::open(&args.image)?;
     let (fmap, _) = fmap::FMap::find_fmap(&input_file)?;
-    let mut errors_encountered = false;
-    let mut output_file = &input_file;
-    let data_file;
 
-    if let Some(path) = &args.output {
-        fs::copy(&args.image, path)?;
-        data_file = File::open(path)?;
-        output_file = &data_file;
+    let mut output_file = tempfile()?;
+    if let Err(e) = std::io::copy(&mut input_file, &mut output_file) {
+        return Err(format!("Failed to prepare workfile. Please check permissions to default temporary directory: `{}'. Error: {e}", std::env::temp_dir().display()).into());
     }
 
+    let mut errors_encountered = false;
     for (area_name, path) in args.params.iter() {
         let ar = match fmap.get(area_name) {
             None => {
@@ -90,8 +88,34 @@ pub fn run_command(args: &LoadFmapArgs) -> Result<(), Box<dyn Error>> {
     }
 
     if errors_encountered {
-        Err("Errors occured during loading. Data might not be valid.".into())
-    } else {
-        Ok(())
+        return Err("Errors occured during loading".into());
     }
+    match &args.output {
+        Some(path) => {
+            let mut final_file = match File::create(path) {
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to move data from workbuffer to the output file. Error: {e}"
+                    )
+                    .into());
+                }
+                Ok(f) => f,
+            };
+            if let Err(e) = std::io::copy(&mut output_file, &mut final_file) {
+                return Err(format!(
+                    "Failed to move data from workbuffer to the output file. Error: {e}"
+                )
+                .into());
+            }
+        }
+        None => {
+            if let Err(e) = std::io::copy(&mut output_file, &mut input_file) {
+                return Err(format!(
+                    "Failed to move data from workbuffer to the output file. Error: {e}"
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
 }
