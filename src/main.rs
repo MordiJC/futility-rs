@@ -26,6 +26,9 @@ enum Commands {
 
     #[command()]
     ExtractFmap(cmd::extract_fmap::ExtractFmapArgs),
+
+    #[command(alias("load_fmap"))]
+    LoadFmap(cmd::load_fmap::LoadFmapArgs),
 }
 
 fn print_completions<G: Generator>(gen: G, cmd: &mut Command) {
@@ -49,6 +52,7 @@ fn main() {
     let result = match command {
         Commands::DumpFmap(args) => cmd::dump_fmap::run_command(args),
         Commands::ExtractFmap(args) => cmd::extract_fmap::run_command(args),
+        Commands::LoadFmap(args) => cmd::load_fmap::run_command(args),
     };
 
     if let Err(e) = result {
