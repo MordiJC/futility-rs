@@ -22,7 +22,7 @@ pub struct ExtractFmapArgs {
 
 pub fn run_command(args: &ExtractFmapArgs) -> Result<(), Box<dyn Error>> {
     let mut input_file = File::open(&args.image)?;
-    let (fmap, _) = fmap::FMap::find_fmap(&input_file)?;
+    let (fmap, _) = fmap::FMap::find_fmap(&mut input_file)?;
     let mut errors_encountered = false;
 
     for (area_name, output_path) in args.params.iter() {

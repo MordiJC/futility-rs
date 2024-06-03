@@ -151,14 +151,14 @@ impl FMap {
         Ok(fmap)
     }
 
-    fn is_fmap(reader: &mut (impl Read + Seek)) -> Result<bool, std::io::Error> {
+    fn is_fmap(reader: &mut impl Read) -> Result<bool, std::io::Error> {
         let mut signature_buffer = [0; SIGNATURE.len()];
         reader.read_exact(&mut signature_buffer)?;
         Ok(signature_buffer == *SIGNATURE)
     }
 
     /// Returns FMap and offset of that fmap on success.
-    pub fn find_fmap(mut reader: impl Read + Seek) -> Result<(FMap, usize), FMapError> {
+    pub fn find_fmap(reader: &mut (impl Read + Seek)) -> Result<(FMap, usize), FMapError> {
         let data_size = reader.seek(SeekFrom::End(0))?;
 
         if HEADER_SIZE as u64 >= data_size {
@@ -170,9 +170,9 @@ impl FMap {
 
         // Quick check at the beginning for directly passed FMap.
         reader.seek(SeekFrom::Start(0))?;
-        if Self::is_fmap(&mut reader)? {
+        if Self::is_fmap(reader)? {
             reader.seek(SeekFrom::Start(0))?;
-            let fmap = Self::parse_fmap(&mut reader)?;
+            let fmap = Self::parse_fmap(reader)?;
             return Ok((fmap, 0));
         }
 
@@ -186,9 +186,9 @@ impl FMap {
             let mut offset = align;
             while offset <= limit {
                 reader.seek(SeekFrom::Start(offset as u64))?;
-                if Self::is_fmap(&mut reader)? {
+                if Self::is_fmap(reader)? {
                     reader.seek(SeekFrom::Start(offset as u64))?;
-                    let fmap = Self::parse_fmap(&mut reader)?;
+                    let fmap = Self::parse_fmap(reader)?;
                     return Ok((fmap, offset));
                 }
 

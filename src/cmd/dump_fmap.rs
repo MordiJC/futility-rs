@@ -297,8 +297,8 @@ pub fn run_command(args: &DumpFmapArgs) -> Result<(), Box<dyn Error>> {
         return extract_fmap::run_command(&extract_args);
     }
 
-    let input_file = File::open(&args.image)?;
-    let (fmap, fmap_offset) = fmap::FMap::find_fmap(&input_file)?;
+    let mut input_file = File::open(&args.image)?;
+    let (fmap, fmap_offset) = fmap::FMap::find_fmap(&mut input_file)?;
 
     if args.human_readable {
         dump_human_readable(

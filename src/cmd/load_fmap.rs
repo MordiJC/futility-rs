@@ -29,7 +29,7 @@ pub struct LoadFmapArgs {
 
 pub fn run_command(args: &LoadFmapArgs) -> Result<(), Box<dyn Error>> {
     let mut input_file = File::open(&args.image)?;
-    let (fmap, _) = fmap::FMap::find_fmap(&input_file)?;
+    let (fmap, _) = fmap::FMap::find_fmap(&mut input_file)?;
 
     let mut output_file = tempfile()?;
     if let Err(e) = std::io::copy(&mut input_file, &mut output_file) {
