@@ -26,15 +26,16 @@ pub fn run_command(args: &ExtractFmapArgs) -> Result<(), Box<dyn Error>> {
     let mut errors_encountered = false;
 
     for (area_name, output_path) in args.params.iter() {
-        let aro = fmap.get(area_name);
-        if aro.is_none() {
-            error!("FlashMap area '{}' not found", area_name);
-            errors_encountered = true;
-            continue;
-        }
+        let ar = match fmap.get(area_name) {
+            None => {
+                error!("FlashMap area '{}' not found", area_name);
+                errors_encountered = true;
+                continue;
+            }
+            Some(v) => v,
+        };
 
         // Verify area
-        let ar = aro.unwrap();
         if ar.size == 0 {
             error!("Area '{}' has zero size", area_name);
             continue;
