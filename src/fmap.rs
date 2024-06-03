@@ -170,10 +170,14 @@ impl FMap {
 
         // Quick check at the beginning for directly passed FMap.
         reader.seek(SeekFrom::Start(0))?;
-        if Self::is_fmap(reader)? {
-            reader.seek(SeekFrom::Start(0))?;
-            let fmap = Self::parse_fmap(reader)?;
-            return Ok((fmap, 0));
+        match Self::is_fmap(reader) {
+            Ok(true) => {
+                reader.seek(SeekFrom::Start(0))?;
+                let fmap = Self::parse_fmap(reader)?;
+                return Ok((fmap, 0));
+            }
+            Err(e) => return Err(FMapError::from(e)),
+            _ => (),
         }
 
         let limit = data_size as usize - HEADER_SIZE;
@@ -186,10 +190,14 @@ impl FMap {
             let mut offset = align;
             while offset <= limit {
                 reader.seek(SeekFrom::Start(offset as u64))?;
-                if Self::is_fmap(reader)? {
-                    reader.seek(SeekFrom::Start(offset as u64))?;
-                    let fmap = Self::parse_fmap(reader)?;
-                    return Ok((fmap, offset));
+                match Self::is_fmap(reader) {
+                    Ok(true) => {
+                        reader.seek(SeekFrom::Start(offset as u64))?;
+                        let fmap = Self::parse_fmap(reader)?;
+                        return Ok((fmap, offset));
+                    }
+                    Err(e) => return Err(FMapError::from(e)),
+                    _ => (),
                 }
 
                 offset += align;
