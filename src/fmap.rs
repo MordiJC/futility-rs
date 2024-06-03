@@ -20,7 +20,7 @@ pub const SIGNATURE: &[u8; 8] = b"__FMAP__";
 pub const VERSION_MAJOR: u32 = 1;
 pub const HEADER_SIZE: usize = SIGNATURE.len() + 1 + 1 + 8 + 4 + NAME_LEN + 2;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct FMapArea {
     pub name: String,
     pub offset: u32,
