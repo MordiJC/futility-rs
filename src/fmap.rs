@@ -204,3 +204,206 @@ impl FMap {
         self.areas.iter().find(|&ar| ar.name == *area_name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use camino::Utf8PathBuf;
+    use std::fs::File;
+    use std::io::Cursor;
+
+    const EXAMPLE_FMAP_BIN_DATA_OFFSET: usize = 0x200;
+
+    #[test]
+    fn test_is_fmap() -> Result<(), String> {
+        let mut reader_ok = Cursor::new(&SIGNATURE[..]);
+        match FMap::is_fmap(&mut reader_ok) {
+            Ok(false) => {
+                return Err(
+                    "FMap::is_fmap() expected to return true for correct signature".to_string(),
+                )
+            }
+            Err(e) => return Err(e.to_string()),
+            Ok(true) => (),
+        }
+
+        let incorrect_signature = "__NOT_FMAP__".as_bytes();
+        let mut reader_not_ok = Cursor::new(incorrect_signature);
+        match FMap::is_fmap(&mut reader_not_ok) {
+            Ok(true) => {
+                Err("FMap::is_fmap() expected to return false for incorrect signature".to_string())
+            }
+            Err(e) => Err(e.to_string()),
+            Ok(false) => Ok(()),
+        }
+    }
+
+    #[test]
+    fn test_find_fmap_with_example_file() -> Result<(), String> {
+        let mut d = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("resources/test/example_fmap.bin");
+
+        let mut fmap_file = match File::open(&d) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to open test resource file `{}'. Error: {e}",
+                    d
+                ))
+            }
+        };
+
+        fn check_example_fmap(
+            reader: &mut (impl Read + Seek),
+            hit_at: usize,
+        ) -> Result<(), String> {
+            let (fmap, hit_offset) = match FMap::find_fmap(reader) {
+                Ok(v) => v,
+                Err(e) => return Err(format!("Faild to parse expected correct FMap. Error: {e}")),
+            };
+            // # name                     start       end         size
+            // -entire flash-             00000000    00000400    00000400
+            //   bootblock                  00000000    00000080    00000080
+            //   normal                     00000080    00000100    00000080
+            //   fallback                   00000100    00000200    00000100
+            //   data                       00000200    00000400    00000200
+
+            assert_eq!(hit_offset, hit_at);
+
+            assert_eq!(fmap.base, 0);
+            assert_eq!(fmap.size, 0x400);
+            assert_eq!(fmap.version_major, 1);
+            assert_eq!(fmap.version_minor, 0);
+            assert_eq!(fmap.name, "example");
+            assert_eq!(fmap.areas.len(), 4);
+
+            let a1 = &fmap.areas[0];
+            assert_eq!(a1.name, "bootblock");
+            assert_eq!(a1.offset, 0);
+            assert_eq!(a1.size, 0x80);
+            assert_eq!(a1.flags, FMapFlags::Static);
+
+            let a2 = &fmap.areas[1];
+            assert_eq!(a2.name, "normal");
+            assert_eq!(a2.offset, 0x80);
+            assert_eq!(a2.size, 0x80);
+            assert_eq!(a2.flags, FMapFlags::Static | FMapFlags::Compressed);
+
+            let a3 = &fmap.areas[2];
+            assert_eq!(a3.name, "fallback");
+            assert_eq!(a3.offset, 0x100);
+            assert_eq!(a3.size, 0x100);
+            assert_eq!(a3.flags, FMapFlags::Static | FMapFlags::Compressed);
+
+            let a4 = &fmap.areas[3];
+            assert_eq!(a4.name, "data");
+            assert_eq!(a4.offset, EXAMPLE_FMAP_BIN_DATA_OFFSET as u32);
+            assert_eq!(a4.size, EXAMPLE_FMAP_BIN_DATA_OFFSET as u32);
+            assert_eq!(a4.flags, FMapFlags::empty());
+
+            Ok(())
+        }
+
+        check_example_fmap(&mut fmap_file, EXAMPLE_FMAP_BIN_DATA_OFFSET)?;
+
+        let fmap_data = match std::fs::read(&d) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to open test resource file `{}'. Error: {e}",
+                    d
+                ))
+            }
+        };
+        let mut c = Cursor::new(&fmap_data[EXAMPLE_FMAP_BIN_DATA_OFFSET..]);
+
+        check_example_fmap(&mut c, 0)
+    }
+
+    #[test]
+    fn test_find_fmap_not_enough_data() -> Result<(), String> {
+        let data = "not_enough_data_for_fmap".as_bytes().to_vec();
+        let mut reader = Cursor::new(data);
+        match FMap::find_fmap(&mut reader) {
+            Ok(_) => Err("FMap::find_fmap expected to fail but succeded".into()),
+            Err(FMapError::IOError { .. }) => Ok(()),
+            Err(e) => Err(format!("Unexpected error: {e}")),
+        }
+    }
+
+    #[test]
+    fn test_find_fmap_incorrect_alignment() -> Result<(), String> {
+        let mut d = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("resources/test/example_fmap.bin");
+
+        let fmap_data = match std::fs::read(&d) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to open test resource file `{}'. Error: {e}",
+                    d
+                ))
+            }
+        };
+        let mut c = Cursor::new(&fmap_data[3..]);
+
+        match FMap::find_fmap(&mut c) {
+            Ok(_) => Err("FMap::find_fmap expected to fail but succeded".into()),
+            Err(FMapError::NotFound) => Ok(()),
+            Err(e) => Err(format!("Unexpected error: {e}")),
+        }
+    }
+
+    #[test]
+    fn test_find_fmap_incorrect_version() -> Result<(), String> {
+        let mut d = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("resources/test/example_fmap.bin");
+
+        let mut fmap_data = match std::fs::read(&d) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to open test resource file `{}'. Error: {e}",
+                    d
+                ))
+            }
+        };
+
+        fmap_data[EXAMPLE_FMAP_BIN_DATA_OFFSET + SIGNATURE.len()] = 6;
+        fmap_data[EXAMPLE_FMAP_BIN_DATA_OFFSET + SIGNATURE.len() + 1] = 6;
+
+        match FMap::find_fmap(&mut Cursor::new(fmap_data)) {
+            Ok(_) => Err("FMap::find_fmap expected to fail but succeded".into()),
+            Err(FMapError::IncorrectVersion(_, _)) => Ok(()),
+            Err(e) => Err(format!("Unexpected error: {e}")),
+        }
+    }
+
+    #[test]
+    fn test_fmap_get() -> Result<(), String> {
+        let fmap = FMap {
+            name: "example".to_string(),
+            version_major: 1,
+            version_minor: 0,
+            base: 0,
+            size: 1024,
+            areas: vec![FMapArea {
+                name: "bootblock".to_string(),
+                offset: 0,
+                size: 128,
+                flags: FMapFlags::empty(),
+            }],
+        };
+
+        match fmap.get("bootblock") {
+            None => return Err("FMapArea expected, got None".to_string()),
+            Some(a) => assert_eq!(a, &fmap.areas[0]),
+        }
+
+        if let Some(a) = fmap.get("not_found") {
+            return Err(format!("Expected None, got FMapArea: {a:?}"));
+        }
+
+        Ok(())
+    }
+}
