@@ -32,7 +32,7 @@ pub struct DumpFmapArgs {
     /// Display using human-readable format.
     human_readable: bool,
 
-    #[arg(long, short = 'H', action, requires = "human_readable")]
+    #[arg(long, short = 'H', action)]
     /// Include gaps in human-readable format. Implies human-readable format.
     human_readable_with_gaps: bool,
 
