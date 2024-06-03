@@ -200,7 +200,7 @@ impl FMap {
         Err(FMapError::NotFound)
     }
 
-    pub fn get(&self, area_name: &String) -> Option<&FMapArea> {
+    pub fn get(&self, area_name: &str) -> Option<&FMapArea> {
         self.areas.iter().find(|&ar| ar.name == *area_name)
     }
 }
