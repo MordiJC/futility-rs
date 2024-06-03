@@ -23,7 +23,7 @@ pub struct LoadFmapArgs {
     /// Output file path.
     pub(in crate::cmd) output: Option<Utf8PathBuf>,
 
-    #[arg(long, default_value = "0xffu8")]
+    #[arg(long, default_value = "0xff", value_parser = common::decimal_or_hex_validator_u8)]
     pub(in crate::cmd) fill_value: u8,
 }
 
