@@ -305,8 +305,8 @@ mod tests {
 
             let a4 = &fmap.areas[3];
             assert_eq!(a4.name, "data");
-            assert_eq!(a4.offset, EXAMPLE_FMAP_BIN_DATA_OFFSET as u32);
-            assert_eq!(a4.size, EXAMPLE_FMAP_BIN_DATA_OFFSET as u32);
+            assert_eq!(a4.offset, 0x200);
+            assert_eq!(a4.size, 0x200);
             assert_eq!(a4.flags, FMapFlags::empty());
 
             Ok(())
