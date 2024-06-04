@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::error::Error;
 use std::fs::File;
+use std::io::{stdout, Write};
 use std::rc::Rc;
 
 use camino::Utf8PathBuf;
@@ -70,20 +71,51 @@ struct Node {
     pub offset: usize,
     pub size: usize,
     pub aliases: Vec<String>,
+    pub parent: Option<Rc<RefCell<Node>>>,
     pub children: Vec<Rc<RefCell<Node>>>,
-    pub valid: bool,
 }
 
-fn dump_human_readable(fmap: &fmap::FMap, show_gaps: bool, ignore_overlap: bool) {
-    // Sort ascending by offset and descending by size to push larger areas first.
-    let sorted = fmap
-        .areas
-        .iter()
-        .sorted_unstable_by_key(|a| (a.offset, u32::MAX - a.size))
-        .collect::<Vec<_>>();
+impl Node {
+    pub fn is_duplicate(&self, node: &Node) -> bool {
+        self.offset == node.offset && self.size == node.size
+    }
 
+    pub fn end(&self) -> usize {
+        self.offset + self.size
+    }
+
+    pub fn overlaps(&self, node: &Node) -> bool {
+        (self.offset < node.offset && node.offset < self.end() && self.end() < node.end())
+            || (node.offset < self.offset && self.offset < node.end() && node.end() < self.end())
+    }
+
+    pub fn fits_in(&self, node: &Node) -> bool {
+        self.offset >= node.offset && self.end() <= node.end()
+    }
+
+    pub fn parents_number(&self) -> usize {
+        match &self.parent {
+            None => 0,
+            Some(p) => p.borrow().parents_number() + 1,
+        }
+    }
+}
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.is_duplicate(other)
+    }
+}
+
+fn dump_human_readable(
+    fmap: &fmap::FMap,
+    show_gaps: bool,
+    ignore_overlap: bool,
+    mut writer: impl Write,
+) -> Result<(), Box<dyn Error>> {
     // Convert into nodes.
-    let nodes = &mut sorted
+    let mut nodes = fmap
+        .areas
         .iter()
         .map(|ar| {
             Rc::new(RefCell::new(Node {
@@ -91,190 +123,277 @@ fn dump_human_readable(fmap: &fmap::FMap, show_gaps: bool, ignore_overlap: bool)
                 offset: ar.offset as usize,
                 size: ar.size as usize,
                 aliases: vec![],
+                parent: None,
                 children: vec![],
-                valid: true,
             }))
         })
-        .collect_vec();
+        .collect::<Vec<_>>();
     nodes.push(Rc::new(RefCell::new(Node {
         name: String::from("-entire flash-"),
         offset: fmap.base as usize,
         size: fmap.size as usize,
         aliases: vec![],
+        parent: None,
         children: vec![],
-        valid: true,
     })));
 
-    // Transform into graph/tree.
+    // Sort ascending by offset and descending by size to push larger areas first.
+    nodes.sort_unstable_by_key(|a| {
+        let v = a.borrow();
+        (v.offset, usize::MAX - v.size)
+    });
+
+    // Remove duplicates and find overlaps
+    let mut deduplicated = vec![nodes[0].clone()];
     let mut overlaps = 0;
-    for i in 0..(nodes.len() - 1) {
-        let mut smallest_index = nodes.len() - 1; // Root node.
-        let ara_name = nodes[i].borrow().name.clone();
-        let ara_offset = nodes[i].borrow().offset;
-        let ara_size = nodes[i].borrow().size;
-        let ara_end = ara_offset + ara_size;
-
-        for j in 0..nodes.len() {
-            if i == j || !nodes[j].borrow().valid {
-                continue;
-            }
-
-            let arb_name = nodes[j].borrow().name.clone();
-            let arb_offset = nodes[j].borrow().offset;
-            let arb_size = nodes[j].borrow().size;
-            let arb_end = arb_offset + arb_size;
-
-            // Check for overlap
-            if ara_offset < arb_offset && arb_offset < ara_end && ara_end < arb_end {
-                if ignore_overlap {
-                    error!(
-                        r#"ERROR: Areas "{}" ({:#x} - {:#x}) and "{}" ({:#x} - {:#x}) overlap!"#,
-                        ara_name, ara_offset, ara_end, arb_name, arb_offset, arb_end
-                    );
+    'dedup_outer: for node in nodes.iter().skip(1) {
+        for d in deduplicated.iter() {
+            if node.borrow().is_duplicate(&d.borrow_mut()) {
+                d.borrow_mut().aliases.push(node.borrow().name.clone());
+                continue 'dedup_outer;
+            } else if node.borrow().overlaps(&d.borrow()) {
+                error!(
+                    r#"Areas "{}" ({:#x} - {:#x}) and "{}" ({:#x} - {:#x}) overlap!"#,
+                    d.borrow().name,
+                    d.borrow().offset,
+                    d.borrow().end(),
+                    node.borrow().name,
+                    node.borrow().offset,
+                    node.borrow().end()
+                );
+                if !ignore_overlap {
                     overlaps += 1;
                 }
-                continue;
+                continue 'dedup_outer;
+            }
+        }
+        // Add first occurrence of entry.
+        deduplicated.push(node.clone());
+    }
+    drop(nodes);
+
+    if overlaps != 0 {
+        return Err(format!("{overlaps} overlapping areas detected. Terminating.").into());
+    }
+
+    // Skip first as it will (or at leas should) be the root node.
+    for i in 1..deduplicated.len() {
+        let mut node_a = deduplicated[i].borrow_mut();
+        for k in (0..i).rev() {
+            let mut node_b = deduplicated[k].borrow_mut();
+            if node_a.fits_in(&node_b) {
+                node_a.parent = Some(deduplicated[k].clone());
+                node_b.children.push(deduplicated[i].clone());
+                break;
+            }
+        }
+    }
+
+    // Check for gaps.
+    let mut gap_count = 0;
+    let mut all_nodes = Vec::<Rc<RefCell<Node>>>::new();
+    for node in deduplicated.iter() {
+        if node.borrow().parent.is_none() {
+            // Node with no parent do not need any processing.
+            all_nodes.push(node.clone());
+            continue;
+        } else if node.borrow().children.is_empty() {
+            // Node with no children should have been already processed.
+            continue;
+        }
+
+        let node_offset = node.borrow().offset;
+        let node_end = node.borrow().end();
+
+        // Create new list of children to easily insert gap entries if necessary.
+        let mut new_children = Vec::<Rc<RefCell<Node>>>::new();
+        for i in 0..node.borrow().children.len() {
+            let child_offset = node.borrow().children[i].borrow().offset;
+            let child_end = node.borrow().children[i].borrow().end();
+
+            // First child. Check with parent.
+            if i == 0 && node_offset < child_offset {
+                gap_count += 1;
+                if show_gaps {
+                    new_children.push(Rc::new(RefCell::new(Node {
+                        name: "[UNUSED]".to_string(),
+                        offset: node_offset,
+                        size: child_offset - node_offset,
+                        aliases: vec![],
+                        parent: Some(node.clone()),
+                        children: vec![],
+                    })));
+                }
+            } else if i != 0 {
+                // Non-first child. Check with previous child.
+                let left_child_end = node.borrow().children[i - 1].borrow().end();
+
+                if left_child_end < child_offset {
+                    gap_count += 1;
+                    if show_gaps {
+                        new_children.push(Rc::new(RefCell::new(Node {
+                            name: "[UNUSED]".to_string(),
+                            offset: left_child_end,
+                            size: child_offset - left_child_end,
+                            aliases: vec![],
+                            parent: Some(node.clone()),
+                            children: vec![],
+                        })));
+                    }
+                }
             }
 
-            // Check for duplicates. Invalidate dupliacete nodes.
-            if ara_offset == arb_offset && ara_size == arb_size {
-                nodes[j].borrow_mut().valid = false;
-                nodes[i].borrow_mut().aliases.push(arb_name);
-                continue;
-            }
+            // Move current child.
+            new_children.push(node.borrow().children[i].clone());
 
-            if arb_offset <= ara_offset
-                && arb_end >= ara_end
-                && arb_size < nodes[smallest_index].borrow().size
-            {
-                smallest_index = j;
+            // Handle last child in similar manner as first child.
+            if i == node.borrow().children.len() && node_end > child_end {
+                gap_count += 1;
+                if show_gaps {
+                    new_children.push(Rc::new(RefCell::new(Node {
+                        name: "[UNUSED]".to_string(),
+                        offset: node_end,
+                        size: node_end - child_end,
+                        aliases: vec![],
+                        parent: Some(node.clone()),
+                        children: vec![],
+                    })));
+                }
             }
         }
 
-        nodes[smallest_index]
-            .borrow_mut()
-            .children
-            .push(Rc::clone(&nodes[i]));
-    }
-    if overlaps != 0 {
-        return;
+        // Replace node children with another one.
+        // NOTE: Maybe unnecessary at this point, but let's keep structure valid from both ends.
+        node.borrow_mut().children.clear();
+        node.borrow_mut().children.append(&mut new_children);
+
+        all_nodes.append(&mut node.borrow().children.iter().cloned().collect_vec());
     }
 
-    println!("# name                     start       end         size");
-    let mut gap_count = 0;
-    show(
-        &nodes[nodes.len() - 1].borrow(),
-        0,
-        show_gaps,
-        &mut gap_count,
-    );
+    drop(deduplicated);
 
-    if gap_count > 0 {
+    all_nodes.sort_unstable_by_key(|a| {
+        let v = a.borrow();
+        (v.offset, usize::MAX - v.size)
+    });
+
+    show(&all_nodes, writer)?;
+
+    if !show_gaps && gap_count > 0 {
         warn!("WARNING: Gaps in FlashMap found. Use -H to show them.");
     }
+    Ok(())
 }
 
-fn show(node: &Node, level: usize, show_gaps: bool, gap_count: &mut i32) {
-    show_node(&node.name, node.offset, node.size, level, false);
-    for alias in node.aliases.iter() {
-        show_node(alias, node.offset, node.size, level + 1, false);
-    }
-
-    let node_end = node.offset + node.size;
-    for (i, child) in node.children.iter().enumerate() {
-        let child_end = child.borrow().offset + child.borrow().size;
-        if i == 0 && node.offset != node.children[i].borrow().offset {
-            if show_gaps {
-                show_node(
-                    &node.name,
-                    child.borrow().offset,
-                    node.children[i].borrow().offset - child.borrow().offset,
-                    level,
-                    true,
-                );
-            }
-            *gap_count += 1;
-        }
-
-        show(&child.borrow(), level + 1, show_gaps, gap_count);
-
-        if i < node.children.len() - 1 && child_end != node.children[i + 1].borrow().offset {
-            if show_gaps {
-                show_node(
-                    &node.name,
-                    child_end,
-                    node.children[i + 1].borrow().offset - child_end,
-                    level + 1,
-                    true,
-                );
-            }
-            *gap_count += 1;
-        }
-        if i == node.children.len() - 1 && node_end != child_end {
-            if show_gaps {
-                show_node(&node.name, child_end, node_end - child_end, level + 1, true);
-            }
-            *gap_count += 1;
+fn show(nodes: &[Rc<RefCell<Node>>], mut writer: impl Write) -> Result<(), Box<dyn Error>> {
+    writeln!(
+        writer,
+        "# name                     start       end         size"
+    )?;
+    for node in nodes.iter() {
+        let (node_level, node_name, node_offset, node_end, node_size) = {
+            let n = node.borrow();
+            (
+                n.parents_number(),
+                n.name.clone(),
+                n.offset,
+                n.end(),
+                n.size,
+            )
+        };
+        show_line(
+            node_level,
+            &node_name,
+            node_offset,
+            node_end,
+            node_size,
+            &mut writer,
+            &"".into(),
+        )?;
+        for alias in node.borrow().aliases.iter() {
+            show_line(
+                node_level,
+                alias,
+                node_offset,
+                node_end,
+                node_size,
+                &mut writer,
+                &"  // DUPLICATE".into(),
+            )?;
         }
     }
+    Ok(())
 }
 
-fn show_node(name: &String, offset: usize, size: usize, level: usize, gap: bool) {
-    let empty_string = String::from("");
-    println!(
+fn show_line(
+    level: usize,
+    name: &String,
+    offset: usize,
+    end: usize,
+    size: usize,
+    mut writer: impl Write,
+    suffix: &String,
+) -> Result<(), Box<dyn Error>> {
+    match writeln!(
+        writer,
         "{}{: <25}  {:08x}    {:08x}    {:08x}{}",
         "  ".repeat(level),
-        if !gap { name } else { &empty_string },
+        name,
         offset,
-        offset + size,
+        end,
         size,
-        if gap {
-            format!("  //gap in {}", name)
-        } else {
-            "".to_string()
-        }
-    );
+        suffix
+    ) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
-fn dump_default(fmap: &fmap::FMap, offset: usize) {
-    println!("hit at {offset:#x}");
-    println!("fmap_signature:  __FMAP__"); // Original futility has no colon here
-    println!(
+fn dump_default(fmap: &fmap::FMap, offset: usize, mut writer: impl Write) -> std::io::Result<()> {
+    writeln!(writer, "hit at {offset:#x}")?;
+    writeln!(writer, "fmap_signature:  __FMAP__")?; // Original futility has no colon here
+    writeln!(
+        writer,
         "fmap_version:    {}.{}",
         fmap.version_major, fmap.version_minor
-    );
-    println!("fmap_base:       {:#x}", fmap.base);
-    println!("fmap_size:       {0:#x} ({0})", fmap.size);
-    println!("fmap_name:       {}", fmap.name);
-    println!("fmap_nareas:     {}", fmap.areas.len());
+    )?;
+    writeln!(writer, "fmap_base:       {:#x}", fmap.base)?;
+    writeln!(writer, "fmap_size:       {0:#x} ({0})", fmap.size)?;
+    writeln!(writer, "fmap_name:       {}", fmap.name)?;
+    writeln!(writer, "fmap_nareas:     {}", fmap.areas.len())?;
     for (i, area) in fmap.areas.iter().enumerate() {
-        println!("area:            {}", i + 1);
-        println!("area_offset:     {:#x}", area.offset);
-        println!("area_size:       {0:#x} ({0})", area.size);
-        println!("area_name:       {}", area.name);
+        writeln!(writer, "area:            {}", i + 1)?;
+        writeln!(writer, "area_offset:     {:#x}", area.offset)?;
+        writeln!(writer, "area_size:       {0:#x} ({0})", area.size)?;
+        writeln!(writer, "area_name:       {}", area.name)?;
     }
+    Ok(())
 }
 
-fn dump_parsable(fmap: &fmap::FMap) {
+fn dump_parsable(fmap: &fmap::FMap, mut writer: impl Write) -> std::io::Result<()> {
     for area in fmap.areas.iter() {
-        println!("{} {} {}", area.name, area.offset, area.size);
+        writeln!(writer, "{} {} {}", area.name, area.offset, area.size)?;
     }
+    Ok(())
 }
 
-fn dump_flashrom_parsable(fmap: &fmap::FMap) {
+fn dump_flashrom_parsable(fmap: &fmap::FMap, mut writer: impl Write) -> std::io::Result<()> {
     for area in fmap.areas.iter() {
-        println!(
+        writeln!(
+            writer,
             "{:#08x}:{:#08x} {}",
             area.offset,
             (area.offset + area.size - 1),
             area.name
-        );
+        )?;
     }
+    Ok(())
 }
 
-fn dump_ec_parsable(fmap: &fmap::FMap) {
+fn dump_ec_parsable(fmap: &fmap::FMap, mut writer: impl Write) -> std::io::Result<()> {
     for area in fmap.areas.iter() {
-        println!(
+        writeln!(
+            writer,
             "{} {} {} {}",
             area.name,
             area.offset,
@@ -284,8 +403,9 @@ fn dump_ec_parsable(fmap: &fmap::FMap) {
             } else {
                 "not-preserve"
             }
-        );
+        )?;
     }
+    Ok(())
 }
 
 pub fn run_command(args: &DumpFmapArgs) -> Result<(), Box<dyn Error>> {
@@ -305,15 +425,16 @@ pub fn run_command(args: &DumpFmapArgs) -> Result<(), Box<dyn Error>> {
             &fmap,
             args.human_readable_with_gaps,
             args.ignore_overlapping_sections,
-        );
+            &mut stdout(),
+        )?;
     } else if args.parsable {
-        dump_parsable(&fmap);
+        dump_parsable(&fmap, &mut stdout())?;
     } else if args.flashrom_parsable {
-        dump_flashrom_parsable(&fmap);
+        dump_flashrom_parsable(&fmap, &mut stdout())?;
     } else if args.ec_parsable {
-        dump_ec_parsable(&fmap);
+        dump_ec_parsable(&fmap, &mut stdout())?;
     } else {
-        dump_default(&fmap, fmap_offset);
+        dump_default(&fmap, fmap_offset, &mut stdout())?;
     }
 
     Ok(())
