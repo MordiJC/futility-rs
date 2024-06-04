@@ -111,7 +111,7 @@ fn dump_human_readable(
     fmap: &fmap::FMap,
     show_gaps: bool,
     ignore_overlap: bool,
-    mut writer: impl Write,
+    writer: impl Write,
 ) -> Result<(), Box<dyn Error>> {
     // Convert into nodes.
     let mut nodes = fmap
@@ -140,7 +140,7 @@ fn dump_human_readable(
     // Sort ascending by offset and descending by size to push larger areas first.
     nodes.sort_unstable_by_key(|a| {
         let v = a.borrow();
-        (v.offset, usize::MAX - v.size)
+        (v.offset, usize::MAX - v.size, v.name.clone())
     });
 
     // Remove duplicates and find overlaps
@@ -193,13 +193,13 @@ fn dump_human_readable(
     let mut gap_count = 0;
     let mut all_nodes = Vec::<Rc<RefCell<Node>>>::new();
     for node in deduplicated.iter() {
-        if node.borrow().parent.is_none() {
-            // Node with no parent do not need any processing.
-            all_nodes.push(node.clone());
-            continue;
-        } else if node.borrow().children.is_empty() {
+        if node.borrow().children.is_empty() {
             // Node with no children should have been already processed.
             continue;
+        }
+        // Special case for orphan nodes.
+        if node.borrow().parent.is_none() {
+            all_nodes.push(node.clone());
         }
 
         let node_offset = node.borrow().offset;
@@ -274,7 +274,7 @@ fn dump_human_readable(
 
     all_nodes.sort_unstable_by_key(|a| {
         let v = a.borrow();
-        (v.offset, usize::MAX - v.size)
+        (v.offset, usize::MAX - v.size, v.name.clone())
     });
 
     show(&all_nodes, writer)?;
@@ -308,7 +308,7 @@ fn show(nodes: &[Rc<RefCell<Node>>], mut writer: impl Write) -> Result<(), Box<d
             node_end,
             node_size,
             &mut writer,
-            &"".into(),
+            &"".to_string(),
         )?;
         for alias in node.borrow().aliases.iter() {
             show_line(
@@ -318,7 +318,7 @@ fn show(nodes: &[Rc<RefCell<Node>>], mut writer: impl Write) -> Result<(), Box<d
                 node_end,
                 node_size,
                 &mut writer,
-                &"  // DUPLICATE".into(),
+                &"  // DUPLICATE".to_string(),
             )?;
         }
     }
@@ -438,4 +438,442 @@ pub fn run_command(args: &DumpFmapArgs) -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+
+    fn example_complex_fmap() -> fmap::FMap {
+        fmap::FMap {
+            name: "FLASH".to_string(),
+            version_major: 1,
+            version_minor: 1,
+            base: 0,
+            size: 33554432,
+            areas: vec![
+                fmap::FMapArea {
+                    name: "SI_ALL".to_string(),
+                    offset: 0,
+                    size: 5242880,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "SI_DESC".to_string(),
+                    offset: 0,
+                    size: 4096,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "SI_ME".to_string(),
+                    offset: 4096,
+                    size: 5238784,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "CSE_LAYOUT".to_string(),
+                    offset: 4096,
+                    size: 8192,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "CSE_RO".to_string(),
+                    offset: 12288,
+                    size: 1679360,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "CSE_DATA".to_string(),
+                    offset: 1691648,
+                    size: 430080,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "CSE_RW".to_string(),
+                    offset: 2121728,
+                    size: 3080192,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "SI_BIOS".to_string(),
+                    offset: 5242880,
+                    size: 28311552,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "RW_SECTION_A".to_string(),
+                    offset: 5242880,
+                    size: 8388608,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "VBLOCK_A".to_string(),
+                    offset: 5242880,
+                    size: 65536,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "FW_MAIN_A".to_string(),
+                    offset: 5308416,
+                    size: 8323008,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "RW_FWID_A".to_string(),
+                    offset: 13631424,
+                    size: 64,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "RW_LEGACY".to_string(),
+                    offset: 13631488,
+                    size: 2097152,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "RW_MISC".to_string(),
+                    offset: 15728640,
+                    size: 1048576,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "UNIFIED_MRC_CACHE".to_string(),
+                    offset: 15728640,
+                    size: 131072,
+                    flags: fmap::FMapFlags::Preserve,
+                },
+                fmap::FMapArea {
+                    name: "RECOVERY_MRC_CACHE".to_string(),
+                    offset: 15728640,
+                    size: 65536,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "RW_MRC_CACHE".to_string(),
+                    offset: 15794176,
+                    size: 65536,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "RW_ELOG".to_string(),
+                    offset: 15859712,
+                    size: 16384,
+                    flags: fmap::FMapFlags::Preserve,
+                },
+                fmap::FMapArea {
+                    name: "RW_SHARED".to_string(),
+                    offset: 15876096,
+                    size: 16384,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "SHARED_DATA".to_string(),
+                    offset: 15876096,
+                    size: 8192,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "SHARED_DATA_DUPLICATE".to_string(),
+                    offset: 15876096,
+                    size: 8192,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "VBLOCK_DEV".to_string(),
+                    offset: 15884288,
+                    size: 8192,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "RW_SPD_CACHE".to_string(),
+                    offset: 15892480,
+                    size: 4096,
+                    flags: fmap::FMapFlags::Preserve,
+                },
+                fmap::FMapArea {
+                    name: "RW_VPD".to_string(),
+                    offset: 15896576,
+                    size: 8192,
+                    flags: fmap::FMapFlags::Preserve,
+                },
+                fmap::FMapArea {
+                    name: "RW_NVRAM".to_string(),
+                    offset: 15904768,
+                    size: 24576,
+                    flags: fmap::FMapFlags::Preserve,
+                },
+                fmap::FMapArea {
+                    name: "RW_SECTION_B".to_string(),
+                    offset: 16777216,
+                    size: 8388608,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "VBLOCK_B".to_string(),
+                    offset: 16777216,
+                    size: 65536,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "FW_MAIN_B".to_string(),
+                    offset: 16842752,
+                    size: 8323008,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "RW_FWID_B".to_string(),
+                    offset: 25165760,
+                    size: 64,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "WP_RO".to_string(),
+                    offset: 25165824,
+                    size: 8388608,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "RO_VPD".to_string(),
+                    offset: 25165824,
+                    size: 16384,
+                    flags: fmap::FMapFlags::Preserve,
+                },
+                fmap::FMapArea {
+                    name: "RO_SECTION".to_string(),
+                    offset: 25182208,
+                    size: 8372224,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "FMAP".to_string(),
+                    offset: 25182208,
+                    size: 2048,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "RO_FRID".to_string(),
+                    offset: 25184256,
+                    size: 64,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "GBB".to_string(),
+                    offset: 25186304,
+                    size: 458752,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "COREBOOT".to_string(),
+                    offset: 25645056,
+                    size: 7909376,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "COREBOOT_OVERLAP".to_string(),
+                    offset: 25645057,
+                    size: 7909377,
+                    flags: fmap::FMapFlags::empty(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_dump_human_readable() -> Result<(), String> {
+        init();
+        let mut result = Vec::new();
+        if let Err(e) = dump_human_readable(&example_complex_fmap(), false, true, &mut result) {
+            return Err(format!("dump_human_readable() failed with error: {e}"));
+        }
+        let expected = r#"# name                     start       end         size
+-entire flash-             00000000    02000000    02000000
+  SI_ALL                     00000000    00500000    00500000
+    SI_DESC                    00000000    00001000    00001000
+    SI_ME                      00001000    00500000    004ff000
+      CSE_LAYOUT                 00001000    00003000    00002000
+      CSE_RO                     00003000    0019d000    0019a000
+      CSE_DATA                   0019d000    00206000    00069000
+      CSE_RW                     00206000    004f6000    002f0000
+  SI_BIOS                    00500000    02000000    01b00000
+    RW_SECTION_A               00500000    00d00000    00800000
+      VBLOCK_A                   00500000    00510000    00010000
+      FW_MAIN_A                  00510000    00cfffc0    007effc0
+      RW_FWID_A                  00cfffc0    00d00000    00000040
+    RW_LEGACY                  00d00000    00f00000    00200000
+    RW_MISC                    00f00000    01000000    00100000
+      UNIFIED_MRC_CACHE          00f00000    00f20000    00020000
+        RECOVERY_MRC_CACHE         00f00000    00f10000    00010000
+        RW_MRC_CACHE               00f10000    00f20000    00010000
+      RW_ELOG                    00f20000    00f24000    00004000
+      RW_SHARED                  00f24000    00f28000    00004000
+        SHARED_DATA                00f24000    00f26000    00002000
+        SHARED_DATA_DUPLICATE      00f24000    00f26000    00002000  // DUPLICATE
+        VBLOCK_DEV                 00f26000    00f28000    00002000
+      RW_SPD_CACHE               00f28000    00f29000    00001000
+      RW_VPD                     00f29000    00f2b000    00002000
+      RW_NVRAM                   00f2b000    00f31000    00006000
+    RW_SECTION_B               01000000    01800000    00800000
+      VBLOCK_B                   01000000    01010000    00010000
+      FW_MAIN_B                  01010000    017fffc0    007effc0
+      RW_FWID_B                  017fffc0    01800000    00000040
+    WP_RO                      01800000    02000000    00800000
+      RO_VPD                     01800000    01804000    00004000
+      RO_SECTION                 01804000    02000000    007fc000
+        FMAP                       01804000    01804800    00000800
+        RO_FRID                    01804800    01804840    00000040
+        GBB                        01805000    01875000    00070000
+        COREBOOT                   01875000    02000000    0078b000
+"#;
+        assert_eq!(String::from_utf8(result).unwrap(), expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dump_human_readable_with_gaps() -> Result<(), String> {
+        init();
+        let mut result = Vec::new();
+        if let Err(e) = dump_human_readable(&example_complex_fmap(), true, true, &mut result) {
+            return Err(format!("dump_human_readable() failed with error: {e}"));
+        }
+        let expected = r#"# name                     start       end         size
+-entire flash-             00000000    02000000    02000000
+  SI_ALL                     00000000    00500000    00500000
+    SI_DESC                    00000000    00001000    00001000
+    SI_ME                      00001000    00500000    004ff000
+      CSE_LAYOUT                 00001000    00003000    00002000
+      CSE_RO                     00003000    0019d000    0019a000
+      CSE_DATA                   0019d000    00206000    00069000
+      CSE_RW                     00206000    004f6000    002f0000
+  SI_BIOS                    00500000    02000000    01b00000
+    RW_SECTION_A               00500000    00d00000    00800000
+      VBLOCK_A                   00500000    00510000    00010000
+      FW_MAIN_A                  00510000    00cfffc0    007effc0
+      RW_FWID_A                  00cfffc0    00d00000    00000040
+    RW_LEGACY                  00d00000    00f00000    00200000
+    RW_MISC                    00f00000    01000000    00100000
+      UNIFIED_MRC_CACHE          00f00000    00f20000    00020000
+        RECOVERY_MRC_CACHE         00f00000    00f10000    00010000
+        RW_MRC_CACHE               00f10000    00f20000    00010000
+      RW_ELOG                    00f20000    00f24000    00004000
+      RW_SHARED                  00f24000    00f28000    00004000
+        SHARED_DATA                00f24000    00f26000    00002000
+        SHARED_DATA_DUPLICATE      00f24000    00f26000    00002000  // DUPLICATE
+        VBLOCK_DEV                 00f26000    00f28000    00002000
+      RW_SPD_CACHE               00f28000    00f29000    00001000
+      RW_VPD                     00f29000    00f2b000    00002000
+      RW_NVRAM                   00f2b000    00f31000    00006000
+    RW_SECTION_B               01000000    01800000    00800000
+      VBLOCK_B                   01000000    01010000    00010000
+      FW_MAIN_B                  01010000    017fffc0    007effc0
+      RW_FWID_B                  017fffc0    01800000    00000040
+    WP_RO                      01800000    02000000    00800000
+      RO_VPD                     01800000    01804000    00004000
+      RO_SECTION                 01804000    02000000    007fc000
+        FMAP                       01804000    01804800    00000800
+        RO_FRID                    01804800    01804840    00000040
+        [UNUSED]                   01804840    01805000    000007c0
+        GBB                        01805000    01875000    00070000
+        COREBOOT                   01875000    02000000    0078b000
+"#;
+        assert_eq!(String::from_utf8(result).unwrap(), expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dump_humap_readable_do_not_ignore_overlaps() -> Result<(), String> {
+        init();
+        let mut result = Vec::new();
+        if dump_human_readable(&example_complex_fmap(), true, false, &mut result).is_ok() {
+            Err("Overlap error expected, got Ok()".to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn example_fmap() -> fmap::FMap {
+        fmap::FMap {
+            name: "example".to_string(),
+            base: 0,
+            size: 0x400,
+            version_major: 1,
+            version_minor: 1,
+            areas: vec![
+                fmap::FMapArea {
+                    name: "bootblock".to_string(),
+                    offset: 0,
+                    size: 0x80,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "normal".to_string(),
+                    offset: 0x80,
+                    size: 0x80,
+                    flags: fmap::FMapFlags::Preserve,
+                },
+                fmap::FMapArea {
+                    name: "fallback".to_string(),
+                    offset: 0x100,
+                    size: 0x100,
+                    flags: fmap::FMapFlags::empty(),
+                },
+                fmap::FMapArea {
+                    name: "data".to_string(),
+                    offset: 0x200,
+                    size: 0x200,
+                    flags: fmap::FMapFlags::empty(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_dump_parsable() -> Result<(), String> {
+        let mut result = Vec::new();
+        if let Err(e) = dump_parsable(&example_fmap(), &mut result) {
+            return Err(format!("dump_parsable() failed with error: {e}"));
+        }
+        let expected = "bootblock 0 128\n\
+                        normal 128 128\n\
+                        fallback 256 256\n\
+                        data 512 512\n";
+        assert_eq!(String::from_utf8(result).unwrap(), expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dump_flashrom_parsable() -> Result<(), String> {
+        let mut result = Vec::new();
+        if let Err(e) = dump_flashrom_parsable(&example_fmap(), &mut result) {
+            return Err(format!("dump_flashrom_parsable() failed with error: {e}"));
+        }
+        let expected = "0x000000:0x00007f bootblock\n\
+                        0x000080:0x0000ff normal\n\
+                        0x000100:0x0001ff fallback\n\
+                        0x000200:0x0003ff data\n";
+        assert_eq!(String::from_utf8(result).unwrap(), expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dump_ec_parsable() -> Result<(), String> {
+        let mut result = Vec::new();
+        if let Err(e) = dump_ec_parsable(&example_fmap(), &mut result) {
+            return Err(format!("dump_ec_parsable() failed with error: {e}"));
+        }
+        let expected = "bootblock 0 128 not-preserve\n\
+                        normal 128 128 preserve\n\
+                        fallback 256 256 not-preserve\n\
+                        data 512 512 not-preserve\n";
+        assert_eq!(String::from_utf8(result).unwrap(), expected);
+
+        Ok(())
+    }
 }
