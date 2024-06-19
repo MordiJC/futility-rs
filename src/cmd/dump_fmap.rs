@@ -148,18 +148,16 @@ fn dump_human_readable(
     let mut overlaps = 0;
     'dedup_outer: for node in nodes.iter().skip(1) {
         for d in deduplicated.iter() {
-            if node.borrow().is_duplicate(&d.borrow_mut()) {
-                d.borrow_mut().aliases.push(node.borrow().name.clone());
+            let node = node.borrow();
+            let mut d = d.borrow_mut();
+            if node.is_duplicate(&d) {
+                d.aliases.push(node.name.clone());
                 continue 'dedup_outer;
-            } else if node.borrow().overlaps(&d.borrow()) {
+            } else if node.overlaps(&d) {
                 error!(
                     r#"Areas "{}" ({:#x} - {:#x}) and "{}" ({:#x} - {:#x}) overlap!"#,
-                    d.borrow().name,
-                    d.borrow().offset,
-                    d.borrow().end(),
-                    node.borrow().name,
-                    node.borrow().offset,
-                    node.borrow().end()
+                    d.name, d.offset, d.end(),
+                    node.name, node.offset, node.end()
                 );
                 if !ignore_overlap {
                     overlaps += 1;
@@ -193,23 +191,25 @@ fn dump_human_readable(
     let mut gap_count = 0;
     let mut all_nodes = Vec::<Rc<RefCell<Node>>>::new();
     for node in deduplicated.iter() {
-        if node.borrow().children.is_empty() {
+        let node_ref = node;
+        let mut node = node.borrow_mut();
+        if node.children.is_empty() {
             // Node with no children should have been already processed.
             continue;
         }
         // Special case for orphan nodes.
-        if node.borrow().parent.is_none() {
-            all_nodes.push(node.clone());
+        if node.parent.is_none() {
+            all_nodes.push(node_ref.clone());
         }
 
-        let node_offset = node.borrow().offset;
-        let node_end = node.borrow().end();
+        let node_offset = node.offset;
+        let node_end = node.end();
 
         // Create new list of children to easily insert gap entries if necessary.
         let mut new_children = Vec::<Rc<RefCell<Node>>>::new();
-        for i in 0..node.borrow().children.len() {
-            let child_offset = node.borrow().children[i].borrow().offset;
-            let child_end = node.borrow().children[i].borrow().end();
+        for i in 0..node.children.len() {
+            let child_offset = node.children[i].borrow().offset;
+            let child_end = node.children[i].borrow().end();
 
             // First child. Check with parent.
             if i == 0 && node_offset < child_offset {
@@ -220,13 +220,13 @@ fn dump_human_readable(
                         offset: node_offset,
                         size: child_offset - node_offset,
                         aliases: vec![],
-                        parent: Some(node.clone()),
+                        parent: Some(node_ref.clone()),
                         children: vec![],
                     })));
                 }
             } else if i != 0 {
                 // Non-first child. Check with previous child.
-                let left_child_end = node.borrow().children[i - 1].borrow().end();
+                let left_child_end = node.children[i - 1].borrow().end();
 
                 if left_child_end < child_offset {
                     gap_count += 1;
@@ -236,7 +236,7 @@ fn dump_human_readable(
                             offset: left_child_end,
                             size: child_offset - left_child_end,
                             aliases: vec![],
-                            parent: Some(node.clone()),
+                            parent: Some(node_ref.clone()),
                             children: vec![],
                         })));
                     }
@@ -244,10 +244,10 @@ fn dump_human_readable(
             }
 
             // Move current child.
-            new_children.push(node.borrow().children[i].clone());
+            new_children.push(node.children[i].clone());
 
             // Handle last child in similar manner as first child.
-            if i == node.borrow().children.len() && node_end > child_end {
+            if i == node.children.len() && node_end > child_end {
                 gap_count += 1;
                 if show_gaps {
                     new_children.push(Rc::new(RefCell::new(Node {
@@ -255,7 +255,7 @@ fn dump_human_readable(
                         offset: node_end,
                         size: node_end - child_end,
                         aliases: vec![],
-                        parent: Some(node.clone()),
+                        parent: Some(node_ref.clone()),
                         children: vec![],
                     })));
                 }
@@ -264,10 +264,10 @@ fn dump_human_readable(
 
         // Replace node children with another one.
         // NOTE: Maybe unnecessary at this point, but let's keep structure valid from both ends.
-        node.borrow_mut().children.clear();
-        node.borrow_mut().children.append(&mut new_children);
+        node.children.clear();
+        node.children.append(&mut new_children);
 
-        all_nodes.append(&mut node.borrow().children.iter().cloned().collect_vec());
+        all_nodes.append(&mut node.children.iter().cloned().collect_vec());
     }
 
     drop(deduplicated);
